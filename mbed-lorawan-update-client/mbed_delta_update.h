@@ -24,11 +24,19 @@
 
 #include "mbed.h"
 #include "BDFile.h"
-#include "janpatch.h"
+#include "Z_ARI_FILE.h"
+#include "ddelta.h"     //MODIFIED
+#include "janpatch.h" 
+
 #include "FragmentationBlockDeviceWrapper.h"
 #include "FlashIAP.h"
 
+#include "mbed_memory_status.h"
+
 #include "mbed_trace.h"
+#ifndef TRACE_GROUP
+#undef TRACE_GROUP
+#endif
 #define TRACE_GROUP "DLTA"
 
 enum MBED_DELTA_UPDATE {
@@ -144,6 +152,43 @@ static void patch_progress(uint8_t pct) {
 }
 
 /**
+ * Apply the delta update w/ decompression
+ * @param bd BlockDevice instance
+ * @param buffer_size Size of the r/w buffer. Note that this will be alocated two times!
+ * @param source Source file on block device
+ * @param patch  Patch file on block device
+ * @param target Target file on block device
+ * @returns 0 if OK, a negative value if not OK
+ */
+int apply_delta_update_compressed(FragmentationBlockDeviceWrapper *bd, size_t buffer_size,BDFILE *source, Z_ARI_FILE *patch, BDFILE *target) {
+    struct ddelta_header header;
+    uint8_t ret;
+    #if DO_MEMORY_PRINT==1
+    tr_debug("Before Header Read");
+    print_all_thread_info();
+    print_heap_and_isr_stack_info();
+    #endif
+
+    if (ret = ddelta_header_read(&header, patch) < 0){
+        tr_debug("NOT a ddelta file sent (error %d)",ret);
+        return -1;
+    }
+    //tr_debug("header read, new fw will be : %d",header.new_file_size);
+
+    #if DO_MEMORY_PRINT==1
+    tr_debug("Before ddelta apply");
+    print_all_thread_info();
+    print_heap_and_isr_stack_info();
+    #endif
+
+    ddelta_apply(&header, patch, source, target);
+
+    return 0;
+}
+
+
+
+/**
  * Apply the delta update
  * @param bd BlockDevice instance
  * @param buffer_size Size of the r/w buffer. Note that this will be alocated three times!
@@ -182,7 +227,6 @@ int apply_delta_update(FragmentationBlockDeviceWrapper *bd, size_t buffer_size, 
         &patch_progress
     };
 
-    /* Go... */
     int j = janpatch(ctx, source, patch, target);
 
     free(source_buffer);

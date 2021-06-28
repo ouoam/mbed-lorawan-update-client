@@ -48,3 +48,21 @@ Highest memory usage is seen when ECDSA-SHA256 verification is happening. To get
 
 * `verificationStarting`.
 * `verificationFinished`.
+
+
+## New `DDELTA` Patching Method
+
+Under the directory `patch/` new patching methode have been added.
+The new algorithms can be used to patch the old version using a more optimized DDELTA patch (patching methode bsdiff-like).
+This new patching method requires an on device decompresssion. This is done using the LZCL algorithms.
+The DDELTA patch is usually compressed using the Arithmetic algo: A new Z_ARI_FILE have been created on the BDFILE template,
+in order to allow decompressing the patch on the fly.
+
+The Memory allocation for the patching can be ajusted depending on the platform used finally.
+
+## Added New `Status & Version Specification` Support
+
+In the main `LoRaWANUpdateClient` file, new functions and definitions have been added to support the requests reguarding the new specification.
+This allows to return statistics about the current status of the device, and the current version so that the device can be sent the correct FUOTA patch.
+The actual specification in version 0.2 can be found at : [LoRaWAN Version and Status Specification_v0_2.pdf](https://github.com/millearthur/mbed-lorawan-update-client/LoRaWAN%20Version%20and%20Status%20Specification_v0_2.pdf)
+

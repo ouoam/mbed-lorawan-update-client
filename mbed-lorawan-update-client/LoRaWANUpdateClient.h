@@ -31,11 +31,30 @@
 #include "update_types.h"
 #include "tiny-aes.h"   // @todo: replace by Mbed TLS / hw crypto?
 
+#include "Decompressor.h"
+
+
+//ADDED FOR COMPATIBILTY WITH 'STATUS&VERSION_V0.2'
+#if defined(TARGET_FF1705_L151CC)
+#define MANUFACTURER_ID "LTEK"
+#define DEVICE_ID "FF1705"
+#elif defined(TARGET_DISCO_L475VG_IOT01A)
+#define MANUFACTURER_ID ""
+#define DEVICE_ID "DISCO_L475VG"
+#else
+#define MANUFACTURER_ID "NA"
+#define DEVICE_ID "NA"
+#endif
+
+
 #if !MBED_CONF_RTOS_PRESENT && !defined(TARGET_SIMULATOR)
 #include "clock.h"
 #endif
 
 #include "mbed_trace.h"
+#ifndef TRACE_GROUP
+#undef TRACE_GROUP
+#endif
 #define TRACE_GROUP "LWUC"
 
 #ifndef NB_FRAG_GROUPS
@@ -77,7 +96,8 @@ enum LW_UC_STATUS {
     LW_UC_INTERNALFLASH_DEINIT_ERROR = 19,
     LW_UC_INTERNALFLASH_SECTOR_SIZE_SMALLER = 20,
     LW_UC_INTERNALFLASH_HEADER_PARSE_FAILED = 21,
-    LW_UC_NOT_CLASS_C_SESSION_ANS = 22
+    LW_UC_NOT_CLASS_C_SESSION_ANS = 22,
+    LW_UC_GENERIC_ERROR = 0
 };
 
 enum LW_UC_EVENT {
@@ -131,6 +151,8 @@ public:
      */
     LW_UC_STATUS handleFragmentationCommand(uint32_t devAddr, uint8_t *buffer, size_t length) {
         if (length == 0) return LW_UC_INVALID_PACKET_LENGTH;
+
+        tr_debug("Frag command %d received",buffer[0]);
 
         // @todo: are we going to accept fragSession commands over multicast? That should be unsafe...
 
@@ -203,6 +225,44 @@ public:
 
             default:
                return LW_UC_UNKNOWN_COMMAND;
+        }
+    }
+
+    /**
+     * Handle packets that came in on the Status & Version port (e.g. 111)
+     * 
+     * @param buffer Data buffer
+     * @param length Length of the data buffer
+     */
+    LW_UC_STATUS handleStatusVersionCommand(uint8_t *buffer, size_t length) {
+        if (length == 0) return LW_UC_INVALID_PACKET_LENGTH;
+
+        tr_debug("Version & Status command %d received",buffer[0]);
+
+        switch (buffer[0]) {
+            case STATUS_VERSION_PKG_REQ: //0
+                return handlePackageVersionReq(buffer + 1, length - 1);
+
+            case STATUS_VERSION_RUNNING_REQ: //1
+                return handleVersionRunningReq(buffer + 1, length - 1);
+
+            case STATUS_VERSION_STORED_REQ: //2
+                return handleVersionStoredReq(buffer + 1, length - 1);
+
+            case STATUS_VERSION_SPACE_REQ:  //3
+                return handleSpaceStatusReq(buffer + 1, length - 1);
+
+            case STATUS_VERSION_UPTIME_REQ: //4
+                return handleUptimeReq(buffer + 1, length - 1);
+
+            case STATUS_VERSION_ERASE_REQ: //5
+                return handleEraseReq(buffer + 1, length - 1);
+            
+            case STATUS_VERSION_ID_REQ: //6
+                return handleDeviceIDReq(buffer + 1, length - 1);
+
+            default:
+                return LW_UC_UNKNOWN_COMMAND;
         }
     }
 
@@ -312,6 +372,10 @@ public:
     LoRaWANUpdateClientCallbacks_t callbacks;
 
 private:
+    
+
+    // ---------------- CLOCK ----------------- //
+
     /**
      * Used by the AS to request the package version implemented by the end-device
      */
@@ -344,7 +408,7 @@ private:
         uint8_t tokenAns = buffer[4] & 0b1111;
 
         if (tokenAns != _clockSyncTokenReq % 16) {
-            tr_debug("handleClockAppTimeAns dropped due to invalid token - expected %u but was %u",
+            tr_debug("handleClockAppTimeAns dropped due to invalid token - expected %lu but was %u",
                 _clockSyncTokenReq % 16, tokenAns);
             return LW_UC_INVALID_CLOCK_SYNC_TOKEN;
         }
@@ -406,6 +470,7 @@ private:
         return LW_UC_OK;
     }
 
+    // ---------------- MULTICAST ----------------- //
     /**
      * Used by the AS to request the package version implemented by the end-device
      */
@@ -454,6 +519,13 @@ private:
         uint8_t mc_root_key_output[16] = {};
         AES_ECB_encrypt(mc_root_key_input, _genAppKey, mc_root_key_output, 16);
 
+        tr_debug("\tmc_root_key_output:");
+        printf("\t         ");
+        for (size_t ix = 0; ix < 16; ix++) {
+            printf("%02x ", mc_root_key_output[ix]);
+        }
+        printf("\n");
+
         // McKEKey = aes128_encrypt(McRootKey, 0x00 | pad16)
         const uint8_t mc_e_key_input[16] = { 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
         uint8_t mc_e_key_output[16];
@@ -474,7 +546,7 @@ private:
 
         mc_groups[mcIx].active = true;
 
-        tr_debug("\tmcAddr:         0x%08x", mc_groups[mcIx].mcAddr);
+        tr_debug("\tmcAddr:         0x%0lx", mc_groups[mcIx].mcAddr);
         tr_debug("\tNwkSKey:");
         printf("\t         ");
         for (size_t ix = 0; ix < 16; ix++) {
@@ -659,6 +731,7 @@ private:
         return LW_UC_OK;
     }
 
+    // ---------------- FRAGMENTATION ----------------- //
     /**
      * Start a new fragmentation session
      */
@@ -857,7 +930,10 @@ private:
      */
     LW_UC_STATUS handleDataFragment(uint32_t devAddr, uint8_t *buffer, size_t length) {
         // always need at least 2 bytes for the indexAndN
-        if (length < 2) return LW_UC_INVALID_PACKET_LENGTH;
+        if (length < 2) {
+            tr_debug(" ! Frag Lenght is too short");
+            return LW_UC_INVALID_PACKET_LENGTH;
+        }
 
         // top 2 bits are the fragSessionIx, other 16 bits are the pkgIndex
         uint16_t indexAndN = (buffer[1] << 8) + buffer[0];
@@ -865,7 +941,7 @@ private:
         uint8_t fragIx = indexAndN >> 14;
         uint16_t frameCounter = indexAndN & 16383;
 
-        tr_debug("processing frame %u", frameCounter);
+        tr_debug(" > processing frame %u", frameCounter);
 
         // if this message was sent on a multicast group, make sure to reset the timeout
         MulticastGroupParams_t *mcGroup = mcGroupFromDevAddr(devAddr);
@@ -879,6 +955,8 @@ private:
         if (!frag_sessions[fragIx].session) return LW_UC_FRAG_SESSION_NOT_ACTIVE;
 
         FragResult result = frag_sessions[fragIx].session->process_frame(frameCounter, buffer + 2, length - 2);
+
+        tr_debug(" > result of fragSession is : %d",result);
 
         if (result == FRAG_OK) {
             return LW_UC_OK;
@@ -942,6 +1020,7 @@ private:
             tr_debug("Diff info: is_diff=%u, size_of_old_fw=%u", diff_info[0], (diff_info[1] << 16) + (diff_info[2] << 8) + diff_info[3]);
 
             if (diff_info[0] == 0) { // Not a diff...
+                tr_debug("File Received is not a diff, trying to apply full fw replacement");
                 // last FOTA_SIGNATURE_LENGTH bytes should be ignored because the signature is not part of the firmware
                 size_t fwSize = (opts.NumberOfFragments * opts.FragmentSize) - opts.Padding - FOTA_SIGNATURE_LENGTH;
                 LW_UC_STATUS authStatus = verifyAuthenticityAndWriteBootloader(
@@ -950,7 +1029,10 @@ private:
                     opts.FlashOffset,
                     fwSize);
 
-                if (authStatus != LW_UC_OK) return authStatus;
+                if (authStatus != LW_UC_OK){
+                    tr_debug("Fw has not been validated, error : %d",authStatus);
+                    return authStatus;
+                }
 
                 if (callbacks.firmwareReady) {
                     callbacks.firmwareReady();
@@ -959,14 +1041,58 @@ private:
                 return LW_UC_OK;
             }
             else {
+                tr_debug("File Received is a PATCH,");
+                LW_UC_STATUS deltaStatus;
                 uint32_t slot1Size;
-                LW_UC_STATUS deltaStatus = applySlot0Slot2DeltaUpdate(
-                    (opts.NumberOfFragments * opts.FragmentSize) - opts.Padding - FOTA_SIGNATURE_LENGTH,
-                    (diff_info[1] << 16) + (diff_info[2] << 8) + diff_info[3],
-                    &slot1Size
-                );
+                switch (diff_info[0])
+                {
+                    
+                    case 1:
+                        {
+                            tr_debug("File Received is a JDIFF diff, trying to apply delta update with JANPATCH");
+                            
+                            #if MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_JPATCH == 1 
+                            deltaStatus = applySlot0Slot2DeltaUpdate_jpatch(
+                                (opts.NumberOfFragments * opts.FragmentSize) - opts.Padding - FOTA_SIGNATURE_LENGTH,
+                                (diff_info[1] << 16) + (diff_info[2] << 8) + diff_info[3],
+                                &slot1Size
+                            );
+                            #else
+                            tr_debug("Device cannot handle this kind of update, it as not been compiled");
+                            #endif
+                            
+                        }
+                        break;
 
-                if (deltaStatus != LW_UC_OK) return deltaStatus;
+
+                    case 2:
+                        {
+                            tr_debug("File Received is an external diff, trying to apply delta update with DDELTA_Patch");
+                                
+                            #if MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_DDELTA == 1 
+                            deltaStatus = applySlot0Slot2DeltaUpdate_ddelta(
+                                (opts.NumberOfFragments * opts.FragmentSize) - opts.Padding - FOTA_SIGNATURE_LENGTH,
+                                (diff_info[1] << 16) + (diff_info[2] << 8) + diff_info[3],
+                                &slot1Size
+                            ); 
+                            #else
+                            tr_debug("Device cannot handle this kind of update, it as not been compiled");
+                            #endif
+                        }
+                        break;
+                    
+                    default:
+                        deltaStatus = LW_UC_DIFF_DELTA_UPDATE_FAILED;
+                        tr_debug("Patch type (%d) have not been recognised",diff_info[0]);
+                        break;
+                }
+                
+
+                if (deltaStatus != LW_UC_OK){
+                    tr_debug("Delta update has not succeded, error : %d",deltaStatus);
+                    return deltaStatus;
+                }
+                tr_debug("Delta update success, now verifying ...");
 
                 LW_UC_STATUS authStatus = verifyAuthenticityAndWriteBootloader(
                     MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_HEADER_ADDRESS,
@@ -974,14 +1100,17 @@ private:
                     MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_FW_ADDRESS,
                     slot1Size);
 
-                if (authStatus != LW_UC_OK) return authStatus;
+                if (authStatus != LW_UC_OK){
+                    tr_debug("Fw has not been validated, error : %d",authStatus);
+                    return authStatus;
+                }
 
                 if (callbacks.firmwareReady) {
                     callbacks.firmwareReady();
                 }
 
                 return LW_UC_OK;
-            }
+            }        
 #endif
         }
 
@@ -989,6 +1118,304 @@ private:
         return LW_UC_PROCESS_FRAME_FAILED;
     }
 
+    // ---------------- STATUS_VERSION ----------------- //
+    // ------- PackageVersionReq & Ans -------//
+    /**
+     * Treatment of PackageVersionReq & call to send answer
+     */
+    LW_UC_STATUS handlePackageVersionReq(uint8_t *buffer, size_t length) {
+        //On this implementation : 
+        //          - Versionning is timestamp format
+        //          - 3 slots are used
+        sendPackageVersionAns(statusVersion_Versioning_SecTimeStamp,3);
+        return LW_UC_OK;
+    }
+    /**
+     * Sending answer to PackageVersionReq
+     */
+    void sendPackageVersionAns(StatusVersion_Versioning versioningType, uint8_t nbSlot) {
+        uint8_t versionInfo = ((0xf0 & (versioningType<<4)) | (0x0f & (uint8_t)nbSlot)) ;//RFU +//Current Running Slot
+                                
+        uint8_t buffer[4];  //Command Head + 3 Payload
+        buffer[0] = STATUS_VERSION_PKG_ANS;
+        buffer[1] = 10;     //PACKAGE ID
+        buffer[2] = 1;      //PACKAGE VERSION
+        buffer[3] = versionInfo;
+        send(STATUS_VERSION_PORT, buffer, 4, true);
+    }
+
+    // ------- VersionRunningReq & Ans -------//
+    /**
+     * Treatment of VersionRunningReq & call to send answer
+     */
+    LW_UC_STATUS handleVersionRunningReq(uint8_t *buffer, size_t length) {
+        //On this implementation, current fw; in always loaded in slot 2
+
+        arm_uc_firmware_details_t details; //type of reading
+        readFwDetailsFromSlot(&details,MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS); //SLOT2
+        uint32_t currVersion = details.version;
+        tr_debug("Version read for current slot is %lu",currVersion);
+        sendVersionRunningAns(2,currVersion);
+        return LW_UC_OK;
+    }
+    /**
+     * Sending answer to VersionRunningReq
+     */
+    void sendVersionRunningAns(uint16_t currentSlot, uint32_t currentVersion) {
+        uint8_t statusInfo =(   (0b11110000 & 0) + //RFU
+                                (0b00001111 & (uint8_t)currentSlot) ); //Current Running Slot;
+        
+        uint8_t buffer[6]; //Command Head + 1 Payload + 4 for version
+        buffer[0] = STATUS_VERSION_RUNNING_ANS;
+        buffer[1] = statusInfo;
+        
+        //copy u32 to buffer in MSB
+        buffer[2] = (uint8_t)(currentVersion & 0xff); 
+        buffer[3] = (uint8_t)(currentVersion>>8 & 0xff); 
+        buffer[4] = (uint8_t)(currentVersion>>16 & 0xff); 
+        buffer[5] = (uint8_t)(currentVersion>>24 & 0xff); 
+
+        send(STATUS_VERSION_PORT, buffer, 6, true);
+
+    }
+
+    // ------- VersionStoredReq & Ans -------//
+    /**
+     * Treatment of VersionStoredReq & call to send answer
+     */
+    LW_UC_STATUS handleVersionStoredReq(uint8_t *buffer, size_t length) {
+        if (length < 1) return LW_UC_INVALID_PACKET_LENGTH;
+        uint8_t nbSlotReq = buffer[0] & 0x07;
+
+        if(nbSlotReq == 0){  //If not correctly requested, considering 3 slots;
+            nbSlotReq = 3;
+        }
+
+        uint8_t slotFlags = 0;
+        uint32_t* slotVersions;
+        slotVersions = (uint32_t*) malloc(nbSlotReq * sizeof(uint32_t));
+
+        for (size_t i = 0; i < nbSlotReq; i++){
+            //fetch fw informations
+
+            arm_uc_firmware_details_t details; //type of reading
+            switch (i)
+            {
+                case 0:
+                    readFwDetailsFromSlot(&details,MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS);
+                    break;
+                case 1:
+                    readFwDetailsFromSlot(&details,MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_HEADER_ADDRESS);
+                    break;
+                case 2:
+                    readFwDetailsFromSlot(&details,MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS);
+                    break;
+                
+                default:
+                    tr_debug("Unable to access SLOT%d",i);
+                    break;
+            }
+            slotVersions[i] = (uint32_t) (details.version & 0xffffffff);
+
+            if(((int32_t)slotVersions[i])<=0 || slotVersions[i]==0xffffffff){ //not valable
+                tr_debug("Version for slot %d could not be read",i);
+                slotVersions[i] = 0;
+            }else{
+                tr_debug("Version read for slot %u is %llu",i,details.version);
+                slotFlags += flagFromInt(i);        //get flag
+            }
+        }
+        
+        sendVersionStoredAns(slotFlags,slotVersions,nbSlotReq);
+        free(slotVersions);
+        return LW_UC_OK;
+    }
+    /**
+     * Sending answer to VersionStoredReq
+     */
+    void sendVersionStoredAns(uint8_t slotFlags, uint32_t *slotVersions, uint8_t nbSlots) {
+        uint8_t *buffer;
+        buffer = (uint8_t *)malloc(1+1+ nbSlots*sizeof(uint32_t)); //Command Head + flagsSlot + SlotsVersions
+    
+        buffer[0] = STATUS_VERSION_STORED_ANS;
+        buffer[1] = slotFlags;
+        for (size_t i = 0; i < nbSlots; i++){
+            tr_debug("total value read is : %lu",slotVersions[i]);
+            buffer[2+i*4] = (uint8_t)(slotVersions[i] & 0xff); 
+            buffer[3+i*4] = (uint8_t)(slotVersions[i]>>8 & 0xff); 
+            buffer[4+i*4] = (uint8_t)(slotVersions[i]>>16 & 0xff); 
+            buffer[5+i*4] = (uint8_t)(slotVersions[i]>>24 & 0xff);
+            tr_debug("Stored is %d,%d,%d,%d",buffer[2+i*4],buffer[3+i*4],buffer[4+i*4],buffer[5+i*4]);
+        }
+        send(STATUS_VERSION_PORT, buffer, 2+nbSlots*sizeof(uint32_t), true);
+
+    }
+
+    // ------- SpaceStatusReq & Ans -------//
+    /**
+     * Treatment of SpaceStatusReq & call to send answer
+     */
+    LW_UC_STATUS handleSpaceStatusReq(uint8_t *buffer, size_t length) {
+        //TODO: GET CURRENT HEAP SPACE
+        mbed_stats_heap_t heap_stats;
+        mbed_stats_heap_get(&heap_stats);
+        tr_info("Heap stats : %lu / %lu (max=%lu)", heap_stats.current_size, heap_stats.reserved_size, heap_stats.max_size);
+        uint32_t diff_value = (heap_stats.reserved_size-heap_stats.current_size);
+        tr_info("Heap availability : %lu",diff_value);
+        tr_info("Slot storage size : %d",MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE);
+
+        sendSpaceStatusAns(diff_value,MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE);
+
+        return LW_UC_OK;
+    }
+    /**
+     * Sending answer to SpaceStatusReq
+     */
+    void sendSpaceStatusAns(uint32_t heapAvailable, uint32_t slotSize) {
+        uint8_t buffer[9]; //Command Head + heapAvailable + slotSize
+
+        buffer[0] = STATUS_VERSION_SPACE_ANS;
+        //copy u32 to buffer in LSB
+        buffer[1] = (uint8_t)(heapAvailable & 0xff); 
+        buffer[2] = (uint8_t)(heapAvailable>>8 & 0xff); 
+        buffer[3] = (uint8_t)(heapAvailable>>16 & 0xff); 
+        buffer[4] = (uint8_t)(heapAvailable>>24 & 0xff); 
+
+        //copy u32 to buffer in LSB
+        buffer[5] = (uint8_t)(slotSize & 0xff); 
+        buffer[6] = (uint8_t)(slotSize>>8 & 0xff); 
+        buffer[7] = (uint8_t)(slotSize>>16 & 0xff); 
+        buffer[8] = (uint8_t)(slotSize>>24 & 0xff); 
+
+
+        tr_info("values %x %x %x %x",buffer[5],buffer[6],buffer[7],buffer[8]);
+
+        send(STATUS_VERSION_PORT, buffer, 9, true);
+    }
+
+    // ------- UptimeReq & Ans -------//
+    /**
+     * Treatment of UptimeReq & call to send answer
+     */
+    LW_UC_STATUS handleUptimeReq(uint8_t *buffer, size_t length) {
+        //TODO: GET CURRENT UPTIME
+        mbed_stats_cpu_t cpu_stats;
+        mbed_stats_cpu_get(&cpu_stats);
+        tr_info("CPU stats: up: %llu; idle: %llu; sleep: %llu;", cpu_stats.uptime/1000000, cpu_stats.idle_time/1000000, cpu_stats.sleep_time/1000000);
+        
+        sendUptimeAns(cpu_stats.uptime/1000000);
+        return LW_UC_OK;
+    }
+    /**
+     * Sending answer to UptimeReq
+     */
+    void sendUptimeAns(uint32_t upTime) {
+        uint8_t buffer[5]; //Command Head + upTime
+
+        buffer[0] = STATUS_VERSION_UPTIME_ANS;
+        //copy u32 to buffer in MSB
+        buffer[1] = (uint8_t)(upTime & 0xff); 
+        buffer[2] = (uint8_t)(upTime>>8 & 0xff); 
+        buffer[3] = (uint8_t)(upTime>>16 & 0xff); 
+        buffer[4] = (uint8_t)(upTime>>24 & 0xff);         
+
+        send(STATUS_VERSION_PORT, buffer, 5, true);
+    }
+
+    // ------- EraseReq -------//
+    /**
+     * Treatment of EraseReq 
+     */
+    LW_UC_STATUS handleEraseReq(uint8_t *buffer, size_t length) {
+        //NOT SAFE ERASE <=> ONLY REPLACING HEADER w/ zeroes
+        uint8_t slot = (buffer[0] & 0x0f); //mask RFU
+
+        //SIZE OF FW HEADER : ARM_UC_EXTERNAL_HEADER_SIZE_V2
+        //(CPYED FROM UPDATE MANAGEMENT)
+        
+        uint8_t zeroes[256] = {0}; 
+
+        if (slot == 0) {
+            //ERASE FIRST SLOT (SLOT 0)
+            uint32_t addr_start = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS;
+            uint32_t addr_end = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS+ARM_UC_EXTERNAL_HEADER_SIZE_V2;
+            uint16_t nbRep = (addr_end-addr_start) / 10;    //  nbRep to get from addr_start to addr_end
+            for (size_t i = 0; i < nbRep; i++)
+            {
+                tr_debug("Erase %d bytes from : %lx \n",10,(addr_start + (i*10)));
+                _bd.program(zeroes, (addr_start + (i*10)), 10);
+            }
+            tr_info("Erase SLOT 0 DONE\n");
+        }else if (slot == 1) {
+            //ERASE FIRST SLOT (SLOT 1)
+            uint32_t addr_start = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_HEADER_ADDRESS;
+            uint32_t addr_end = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_HEADER_ADDRESS+MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE;
+            uint16_t nbRep = (addr_end-addr_start) / 256;    //  nbRep to get from addr_start to addr_end
+            for (size_t i = 0; i < nbRep; i++)
+            {
+                tr_debug("Erase %d bytes from : %lx \n",256,(addr_start + (i*256)));
+                _bd.program(zeroes, (addr_start + (i*256)), 256);
+            }
+            tr_info("Erase SLOT 1 DONE\n");
+        }else if (slot==2){
+            tr_info("Should not erase slot2, contains current FW copy\n");
+        }else{
+            tr_info("Requested slot to erase is not supported (slot%d)\n",slot);
+        }
+        return LW_UC_OK;
+    }
+
+    // ------- handleDeviceIDReq -------//
+    /**
+     * Treatment of handleDeviceIDReq & send answer
+     */
+    LW_UC_STATUS handleDeviceIDReq(uint8_t *buffer, size_t length) {    
+        uint8_t flagsReq = (buffer[0] & 0x03); //mask RFU
+        sendDeviceIDAns(flagsReq);
+        return LW_UC_OK;
+    }
+    /**
+     * Sending answer to handleDeviceIDReq
+     */
+    void sendDeviceIDAns(uint8_t flagsReq) {
+
+        uint16_t totalStringLength = 0;
+        uint8_t nbString = 0;
+ 
+        if((flagsReq & 0b10) == 0b10){      //Requested Manufacturer ID
+            totalStringLength += strlen(MANUFACTURER_ID);
+            nbString++;
+        }
+        if((flagsReq & 0b01) == 0b01){      //Requested Device ID
+            totalStringLength += strlen(DEVICE_ID);
+            nbString++;
+        }
+        //ADD OTHER INFO HERE
+
+        uint8_t * buffer = (uint8_t *) malloc(1 + 1 + nbString + totalStringLength);
+        //CMD + FLAGS OF STRING + NBSTRING + STRLEN
+        buffer[0] = STATUS_VERSION_ID_ANS;
+        buffer[1] = flagsReq;
+        uint8_t index = 2;
+        
+        if((flagsReq & 0b10) == 0b10){      //Requested Manufacturer ID
+            buffer[index] = strlen(MANUFACTURER_ID);
+            memcpy((buffer+index+1),MANUFACTURER_ID,buffer[index]);
+            index += buffer[index]; //offsets from the read len
+            index++;                //offsets from 1 more for str len
+        }
+        if((flagsReq & 0b01) == 0b01){      //Requested Device ID
+            buffer[index] = strlen(DEVICE_ID);
+            memcpy((buffer+index+1),DEVICE_ID,buffer[index]);
+            index += buffer[index]; //offsets from the read len
+            index++;                //offsets from 1 more for str len
+        }
+
+        send(STATUS_VERSION_PORT, buffer, (1 + 1 + nbString + totalStringLength), true);
+    }
+
+
+    // ---------------- UPDATE ----------------- //
     /**
      * Verify the authenticity (SHA hash and ECDSA hash) of a firmware package,
      * and after passing verification write the bootloader header
@@ -1187,14 +1614,31 @@ private:
     }
 #endif
 
+
+#if ( (!defined(MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_JPATCH) && !defined(MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_DDELTA) ) || ((MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_JPATCH == 0) && (MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_DDELTA==0)))
+    //If not specified JANPATCH OR DDELTA, DEFINE JPATCH
+    #define MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_JPATCH = 1
+
+    LW_UC_STATUS applySlot0Slot2DeltaUpdate_ddelta(size_t sizeOfFwInSlot0, size_t sizeOfFwInSlot2, uint32_t *sizeOfFwInSlot1) {
+        tr_info("DDELTA NOT FOUND, so using jpatch instead");
+        applySlot0Slot2DeltaUpdate_jpatch( sizeOfFwInSlot0,  sizeOfFwInSlot2, sizeOfFwInSlot1);
+
+        }
+    }
+
+#endif
+
+#if MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_JPATCH == 1 
     /**
      * Apply a delta update between slot 2 (source file) and slot 0 (diff file) and place in slot 1
+     * This functions apply the JANPATCH from a uncompressed stream
      *
      * @param sizeOfFwInSlot0 Size of the diff image that we just received
      * @param sizeOfFwInSlot2 Expected size of firmware in slot 2 (will do sanity check)
      * @param sizeOfFwInSlot1 Out parameter which will be set to the size of the new firmware in slot 1
      */
-    LW_UC_STATUS applySlot0Slot2DeltaUpdate(size_t sizeOfFwInSlot0, size_t sizeOfFwInSlot2, uint32_t *sizeOfFwInSlot1) {
+    LW_UC_STATUS applySlot0Slot2DeltaUpdate_jpatch(size_t sizeOfFwInSlot0, size_t sizeOfFwInSlot2, uint32_t *sizeOfFwInSlot1) {
+        tr_debug("UPDATE : applySlot0Slot2DeltaUpdate (jpatch)");
         // read details about the current firmware, it's in the slot2 header
         arm_uc_firmware_details_t curr_details;
         int bd_status = _bd.read(&curr_details, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS, sizeof(arm_uc_firmware_details_t));
@@ -1204,7 +1648,7 @@ private:
 
         // so... sanity check, do we have the same size in both places
         if (sizeOfFwInSlot2 != curr_details.size) {
-            tr_warn("Diff size mismatch, expecting %u (manifest) but got %llu (slot 2 content)", sizeOfFwInSlot2, curr_details.size);
+            tr_warn("Diff size mismatch, expecting %u (manifest) but got %lu (slot 2 content)", sizeOfFwInSlot2, (uint32_t)curr_details.size);
             return LW_UC_DIFF_SIZE_MISMATCH;
         }
 
@@ -1254,7 +1698,86 @@ private:
         *sizeOfFwInSlot1 = target.ftell();
 
         return LW_UC_OK;
+
+        /*------------------END-------------*/
     }
+#endif
+
+#if MBED_CONF_LORAWAN_UPDATE_CLIENT_FUOTA_USE_DDELTA == 1
+
+    /**
+     * Apply a delta update between slot 2 (source file) and slot 0 (diff file) and place in slot 1
+     * This functions apply the ddelta patch from a compressed stream
+     *
+     * @param sizeOfFwInSlot0 Size of the diff image that we just received
+     * @param sizeOfFwInSlot2 Expected size of firmware in slot 2 (will do sanity check)
+     * @param sizeOfFwInSlot1 Out parameter which will be set to the size of the new firmware in slot 1
+     */
+    LW_UC_STATUS applySlot0Slot2DeltaUpdate_ddelta(size_t sizeOfFwInSlot0, size_t sizeOfFwInSlot2, uint32_t *sizeOfFwInSlot1) {
+        tr_debug("UPDATE : applySlot0Slot2DeltaUpdate (ddelta)");
+        // read details about the current firmware, it's in the slot2 header
+        arm_uc_firmware_details_t curr_details;
+        int bd_status = _bd.read(&curr_details, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS, sizeof(arm_uc_firmware_details_t));
+        if (bd_status != BD_ERROR_OK) {
+            return LW_UC_BD_READ_ERROR;
+        }
+
+        // so... sanity check, do we have the same size in both places
+        if (sizeOfFwInSlot2 != curr_details.size) {
+            tr_warn("Diff size mismatch, expecting %u (manifest) but got %lu (slot 2 content)", sizeOfFwInSlot2, (uint32_t)curr_details.size);
+            return LW_UC_DIFF_SIZE_MISMATCH;
+        }
+
+        // calculate sha256 hash for current fw & diff file (for debug purposes)
+        {
+            unsigned char sha_out_buffer[32];
+            uint8_t sha_buffer[LW_UC_SHA256_BUFFER_SIZE];
+            FragmentationSha256* sha256 = new FragmentationSha256(&_bd, sha_buffer, sizeof(sha_buffer));
+
+            tr_debug("Firmware hash in slot 2 (current firmware): ");
+            sha256->calculate(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_FW_ADDRESS, sizeOfFwInSlot2, sha_out_buffer);
+            print_buffer(sha_out_buffer, 32, false);
+            printf("\n");
+
+            tr_debug("Firmware hash in slot 2 (expected): ");
+            print_buffer(curr_details.hash, 32, false);
+            printf("\n");
+
+            if (!compare_buffers(curr_details.hash, sha_out_buffer, 32)) {
+                tr_info("Firmware in slot 2 hash incorrect hash");
+                delete sha256;
+                return LW_UC_DIFF_INCORRECT_SLOT2_HASH;
+            }
+
+            tr_debug("Firmware hash in slot 0 (diff file): ");
+            sha256->calculate(MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, sizeOfFwInSlot0, sha_out_buffer);
+            print_buffer(sha_out_buffer, 32, false);
+            printf("\n");
+
+            delete sha256;
+        }
+
+        /* MADE FOR ddelta patch*/
+        BDFILE source(&_bd, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_FW_ADDRESS, sizeOfFwInSlot2);
+        Z_ARI_FILE diff(&_bd, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_FW_ADDRESS, sizeOfFwInSlot0);
+        BDFILE target(&_bd, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT1_FW_ADDRESS, 0);
+
+        int v = apply_delta_update_compressed(&_bd, 0,&source, &diff, &target);
+
+        if (v != MBED_DELTA_UPDATE_OK) {
+            tr_warn("apply_delta_update failed %d", v);
+            return LW_UC_DIFF_DELTA_UPDATE_FAILED;
+        }
+
+        tr_debug("Patched firmware length is %ld", target.ftell());
+
+        *sizeOfFwInSlot1 = target.ftell();
+
+        return LW_UC_OK;
+    }
+#endif
+
+
 
     /**
      * Find an active multicast group based on device address
@@ -1284,7 +1807,7 @@ private:
             if (mc_groups[mcIx].active && mc_groups[mcIx].params.sessionTime > currTime) {
                 uint32_t timeToStart = mc_groups[mcIx].params.sessionTime - static_cast<uint32_t>(currTime % 4294967296 /*pow(2, 32)*/);
 
-                tr_debug("adjusted time to start for mc group %u to %u", mcIx, timeToStart);
+                tr_debug("adjusted time to start for mc group %u to %lu", mcIx, timeToStart);
 
                 mc_groups[mcIx].startTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_start_irq), static_cast<float>(timeToStart));
                 mc_groups[mcIx].timeoutTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_timeout_irq),
@@ -1380,6 +1903,33 @@ private:
         }
     }
 
+    /**
+     * Read a firmware header from bd device
+     */
+    LW_UC_STATUS readFwDetailsFromSlot(arm_uc_firmware_details_t *details,uint32_t addr) {
+        _bd.init();
+        int bd_status = _bd.read(details, addr, sizeof(arm_uc_firmware_details_t));
+        if (bd_status != BD_ERROR_OK) {
+            return LW_UC_BD_READ_ERROR;
+        }
+        return LW_UC_OK;
+    }
+
+    /**
+     * Gives Flags from int 0->3
+     */
+    uint8_t flagFromInt(uint8_t in) {
+        switch (in)
+        {
+            case 0: return 0b1;
+            case 1: return 0b10;
+            case 2: return 0b100;
+            case 3: return 0b1000;
+            case 4: return 0b10000;
+            default : return 0;
+        }
+    }
+    
     // store fragmentation groups here...
     FragmentationSessionParams_t frag_sessions[NB_FRAG_GROUPS];
     MulticastGroupParams_t mc_groups[NB_MC_GROUPS];
