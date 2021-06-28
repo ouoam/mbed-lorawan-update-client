@@ -30,70 +30,20 @@ public:
      * @param _offset Offset of the file in flash
      * @param _size Size of the file in flash
      */
-    BDFILE(FragmentationBlockDeviceWrapper* _bd, size_t _offset, size_t _size) :
-        bd(_bd), offset(_offset), size(_size), current_pos(0)
-    {
-
-    }
+    BDFILE(FragmentationBlockDeviceWrapper* _bd, size_t _offset, size_t _size);
 
     /**
      * Sets position in the file
      * @param pos New position
      * @param origin Seek position
      */
-    int fseek(long int pos, int origin) {
-        switch (origin) {
-            case SEEK_SET: { // from beginning
-                current_pos = pos;
-                break;
-            }
-            case SEEK_CUR: {
-                current_pos += pos;
-                break;
-            }
-            case SEEK_END: {
-                current_pos = size + pos;
-                break;
-            }
-            default: return -1;
-        }
+    int fseek(long int pos, int origin);
 
-        if (current_pos < 0) return -1;
-        if (static_cast<size_t>(current_pos) > size) return -1;
-        return 0;
-    }
+    size_t fread(void *buffer, size_t elements, size_t element_size) ;
 
-    size_t fread(void *buffer, size_t elements, size_t element_size) {
-        int r = bd->read(buffer, offset + current_pos, elements * element_size);
-        if (r != 0) return 0;
+    size_t fwrite(const void *buffer, size_t elements, size_t size);
 
-        int new_pos = current_pos + (elements * element_size);
-        if (new_pos < 0) {
-            return -1;
-        }
-        if (static_cast<size_t>(new_pos) > size) {
-            int r = size - current_pos;
-            current_pos = size;
-            return r;
-        }
-
-        current_pos = new_pos;
-
-        return elements * element_size;
-    }
-
-    size_t fwrite(const void *buffer, size_t elements, size_t size) {
-        int r = bd->program(buffer, offset + current_pos, elements * size);
-        if (r != 0) return 0;
-
-        current_pos += (elements * size);
-
-        return elements * size;
-    }
-
-    long int ftell() {
-        return current_pos;
-    }
+    long int ftell() ;
 
 private:
     FragmentationBlockDeviceWrapper* bd;
@@ -102,21 +52,12 @@ private:
     int current_pos;
 };
 
-// Functions similar to the POSIX functions
-int bd_fseek(BDFILE *file, long int pos, int origin) {
-    return file->fseek(pos, origin);
-}
 
-long int bd_ftell(BDFILE *file) {
-    return file->ftell();
-}
+int bd_fseek(BDFILE *file, long int pos, int origin);
+long int bd_ftell(BDFILE *file);
+size_t bd_fread(void *buffer, size_t elements, size_t size, BDFILE *file);
+size_t bd_fwrite(const void *buffer, size_t elements, size_t size, BDFILE *file);
 
-size_t bd_fread(void *buffer, size_t elements, size_t size, BDFILE *file) {
-    return file->fread(buffer, elements, size);
-}
-
-size_t bd_fwrite(const void *buffer, size_t elements, size_t size, BDFILE *file) {
-    return file->fwrite(buffer, elements, size);
-}
 
 #endif // _MBED_LORAWAN_UPDATE_CLIENT_BDFILE
+
