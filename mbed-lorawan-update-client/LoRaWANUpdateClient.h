@@ -51,6 +51,10 @@
 #include "clock.h"
 #endif
 
+// Difference in time between Jan 1, 1970 (Unix epoch) and Jan 6, 1980 (GPS epoch).
+// 18 is leap second
+#define GPS_TO_UNIX_EpochDiff (315964800 - 18)
+
 #include "mbed_trace.h"
 #ifdef TRACE_GROUP
 #undef TRACE_GROUP
@@ -132,7 +136,11 @@ public:
             mc_groups[ix].active = false;
         }
 
-        _clockSync.correction = 0;
+        if (get_rtc_time_s() < GPS_TO_UNIX_EpochDiff) {
+            set_time(GPS_TO_UNIX_EpochDiff);
+        }
+
+        _clockSync.correction = -GPS_TO_UNIX_EpochDiff;
         _clockSync.rtcValueAtLastRequest = 0;
         _clockSyncTokenReq = 0;
 
@@ -274,9 +282,9 @@ public:
      *                       if not enabled the network only replies when clock drift is >250 ms.
      */
     LW_UC_STATUS requestClockSync(bool answerRequired) {
-        uint32_t deviceTime = static_cast<uint32_t>(getCurrentTime_s() % 4294967296 /*pow(2, 32)*/);
-        uint8_t param = _clockSyncTokenReq % 16;
-        param += (answerRequired ? 0b10000 : 0);
+        uint32_t deviceTime = static_cast<uint32_t>(getCurrentTime_s() & 0xFFFFFFFF /*modulo pow(2, 32)*/);
+        uint8_t param = _clockSyncTokenReq & 0x0F;
+        param |= (answerRequired ? 0b10000 : 0);
 
         uint8_t request[CLOCK_APP_TIME_REQ_LENGTH] = {
             CLOCK_APP_TIME_REQ,
@@ -307,7 +315,8 @@ public:
      * @param gpsTime   Current time in seconds since 00:00:00, Sunday 6th of January 1980 (start of the GPS epoch)
      */
     void outOfBandClockSync(uint32_t gpsTime) {
-        _clockSync.correction = gpsTime - get_rtc_time_s();
+        set_time(gpsTime + GPS_TO_UNIX_EpochDiff);
+        _clockSync.correction -= GPS_TO_UNIX_EpochDiff;
 
         updateMcGroupsBasedOnNewTime();
     }
@@ -404,10 +413,10 @@ private:
             return LW_UC_INVALID_PACKET_LENGTH;
         }
 
-        int32_t timeCorrection = (buffer[3] << 24) + (buffer[2] << 16) + (buffer[1] << 8) + buffer[0];
+        int32_t timeCorrection = (buffer[3] << 24) | (buffer[2] << 16) | (buffer[1] << 8) | buffer[0];
         uint8_t tokenAns = buffer[4] & 0b1111;
 
-        if (tokenAns != _clockSyncTokenReq % 16) {
+        if (tokenAns != (_clockSyncTokenReq & 0x0F)) {
             tr_debug("handleClockAppTimeAns dropped due to invalid token - expected %u but was %u",
                 _clockSyncTokenReq % 16, tokenAns);
             return LW_UC_INVALID_CLOCK_SYNC_TOKEN;
@@ -421,6 +430,8 @@ private:
         uint64_t rx_tx_delta = get_rtc_time_s() - _clockSync.rtcValueAtLastRequest;
 
         _clockSync.correction = _clockSync.correction + timeCorrection - rx_tx_delta;
+        set_time(get_rtc_time_s() + _clockSync.correction + GPS_TO_UNIX_EpochDiff);
+        _clockSync.correction = -GPS_TO_UNIX_EpochDiff;
 
         updateMcGroupsBasedOnNewTime();
 
