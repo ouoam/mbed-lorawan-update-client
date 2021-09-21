@@ -52,7 +52,7 @@
 #endif
 
 #include "mbed_trace.h"
-#ifndef TRACE_GROUP
+#ifdef TRACE_GROUP
 #undef TRACE_GROUP
 #endif
 #define TRACE_GROUP "LWUC"
@@ -326,7 +326,7 @@ public:
         mbed_stats_heap_t heap_stats;
         mbed_stats_heap_get(&heap_stats);
 
-        tr_info("%sHeap stats: %lu / %lu (max=%lu)", prefix, heap_stats.current_size, heap_stats.reserved_size, heap_stats.max_size);
+        tr_info("%sHeap stats: %u / %u (max=%u)", prefix, heap_stats.current_size, heap_stats.reserved_size, heap_stats.max_size);
     }
 
     /**
@@ -353,7 +353,7 @@ public:
             timeToStart = originalTimeToStart - timeDelta;
         }
 
-        tr_debug("updateClassCSessionAns, originalTimeToStart=%lu, delta=%lu, newTimeToStart=%lu",
+        tr_debug("updateClassCSessionAns, originalTimeToStart=%u, delta=%u, newTimeToStart=%u",
             originalTimeToStart, timeDelta, timeToStart);
 
         // update buffer
@@ -408,14 +408,14 @@ private:
         uint8_t tokenAns = buffer[4] & 0b1111;
 
         if (tokenAns != _clockSyncTokenReq % 16) {
-            tr_debug("handleClockAppTimeAns dropped due to invalid token - expected %lu but was %u",
+            tr_debug("handleClockAppTimeAns dropped due to invalid token - expected %u but was %u",
                 _clockSyncTokenReq % 16, tokenAns);
             return LW_UC_INVALID_CLOCK_SYNC_TOKEN;
         }
 
         _clockSyncTokenReq++;
 
-        tr_debug("handleClockAppTimeAns, correction=%ld", timeCorrection);
+        tr_debug("handleClockAppTimeAns, correction=%d", timeCorrection);
 
         // delta between now and the time we sent the request out
         uint64_t rx_tx_delta = get_rtc_time_s() - _clockSync.rtcValueAtLastRequest;
@@ -546,7 +546,7 @@ private:
 
         mc_groups[mcIx].active = true;
 
-        tr_debug("\tmcAddr:         0x%0lx", mc_groups[mcIx].mcAddr);
+        tr_debug("\tmcAddr:         0x%0x", mc_groups[mcIx].mcAddr);
         tr_debug("\tNwkSKey:");
         printf("\t         ");
         for (size_t ix = 0; ix < 16; ix++) {
@@ -559,8 +559,8 @@ private:
             printf("%02x ", mc_groups[mcIx].appSKey[ix]);
         }
         printf("\n");
-        tr_debug("\tminFcFCount:    %lu", mc_groups[mcIx].minFcFCount);
-        tr_debug("\tmaxFcFCount:    %lu", mc_groups[mcIx].maxFcFCount);
+        tr_debug("\tminFcFCount:    %u", mc_groups[mcIx].minFcFCount);
+        tr_debug("\tmaxFcFCount:    %u", mc_groups[mcIx].maxFcFCount);
 
         return sendMulticastSetupAns(false, mcIx);
     }
@@ -711,9 +711,9 @@ private:
             timeToStart = mc_groups[mcIx].params.sessionTime - static_cast<uint32_t>(currTime % 4294967296 /*pow(2, 32)*/);
         }
 
-        tr_debug("\ttimeToStart:       %lu", timeToStart);
-        tr_debug("\ttimeOut:           %lu", mc_groups[mcIx].params.timeOut);
-        tr_debug("\tdlFreq:            %lu", mc_groups[mcIx].params.dlFreq);
+        tr_debug("\ttimeToStart:       %u", timeToStart);
+        tr_debug("\ttimeOut:           %u", mc_groups[mcIx].params.timeOut);
+        tr_debug("\tdlFreq:            %u", mc_groups[mcIx].params.dlFreq);
         tr_debug("\tdataRate:          %u", mc_groups[mcIx].params.dr);
 
         response[2] = timeToStart & 0xff;
@@ -722,9 +722,9 @@ private:
 
         // start timers (but only if clock sync was done before, otherwise the clock sync will start them)
         if (timeToStart != 0xffffffff) {
-            mc_groups[mcIx].startTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_start_irq), static_cast<float>(timeToStart));
+            mc_groups[mcIx].startTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_start_irq), std::chrono::seconds(timeToStart));
             mc_groups[mcIx].timeoutTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_timeout_irq),
-                static_cast<float>(timeToStart + mc_groups[mcIx].params.timeOut));
+                std::chrono::seconds(timeToStart + mc_groups[mcIx].params.timeOut));
         }
 
         send(MCCONTROL_PORT, response, MC_CLASSC_SESSION_ANS_LENGTH, true);
@@ -774,7 +774,7 @@ private:
         tr_debug("\tFragAlgo:         %u", frag_sessions[fragIx].fragAlgo);
         tr_debug("\tBlockAckDelay:    %u", frag_sessions[fragIx].blockAckDelay);
         tr_debug("\tPadding:          %u", frag_sessions[fragIx].padding);
-        tr_debug("\tDescriptor:       %lu", frag_sessions[fragIx].descriptor);
+        tr_debug("\tDescriptor:       %u", frag_sessions[fragIx].descriptor);
 
         // create a fragmentation session which can handle all this...
         FragmentationSessionOpts_t opts;
@@ -948,7 +948,7 @@ private:
         if (mcGroup != NULL) {
             // @todo: there's another check that we need to do here around the frame counter min/max...
             mcGroup->timeoutTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_timeout_irq),
-                static_cast<float>(mcGroup->params.timeOut));
+                std::chrono::seconds(mcGroup->params.timeOut));
         }
 
         if (!frag_sessions[fragIx].active) return LW_UC_FRAG_SESSION_NOT_ACTIVE;
@@ -1154,7 +1154,7 @@ private:
         arm_uc_firmware_details_t details; //type of reading
         readFwDetailsFromSlot(&details,MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS); //SLOT2
         uint32_t currVersion = details.version;
-        tr_debug("Version read for current slot is %lu",currVersion);
+        tr_debug("Version read for current slot is %u",currVersion);
         sendVersionRunningAns(2,currVersion);
         return LW_UC_OK;
     }
@@ -1240,7 +1240,7 @@ private:
         buffer[0] = STATUS_VERSION_STORED_ANS;
         buffer[1] = slotFlags;
         for (size_t i = 0; i < nbSlots; i++){
-            tr_debug("total value read is : %lu",slotVersions[i]);
+            tr_debug("total value read is : %u",slotVersions[i]);
             buffer[2+i*4] = (uint8_t)(slotVersions[i] & 0xff); 
             buffer[3+i*4] = (uint8_t)(slotVersions[i]>>8 & 0xff); 
             buffer[4+i*4] = (uint8_t)(slotVersions[i]>>16 & 0xff); 
@@ -1259,9 +1259,9 @@ private:
         //TODO: GET CURRENT HEAP SPACE
         mbed_stats_heap_t heap_stats;
         mbed_stats_heap_get(&heap_stats);
-        tr_info("Heap stats : %lu / %lu (max=%lu)", heap_stats.current_size, heap_stats.reserved_size, heap_stats.max_size);
+        tr_info("Heap stats : %u / %u (max=%u)", heap_stats.current_size, heap_stats.reserved_size, heap_stats.max_size);
         uint32_t diff_value = (heap_stats.reserved_size-heap_stats.current_size);
-        tr_info("Heap availability : %lu",diff_value);
+        tr_info("Heap availability : %u",diff_value);
         tr_info("Slot storage size : %d",MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE);
 
         sendSpaceStatusAns(diff_value,MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT_SIZE);
@@ -1342,7 +1342,7 @@ private:
             uint16_t nbRep = (addr_end-addr_start) / 10;    //  nbRep to get from addr_start to addr_end
             for (size_t i = 0; i < nbRep; i++)
             {
-                tr_debug("Erase %d bytes from : %lx \n",10,(addr_start + (i*10)));
+                tr_debug("Erase %d bytes from : %x \n",10,(addr_start + (i*10)));
                 _bd.program(zeroes, (addr_start + (i*10)), 10);
             }
             tr_info("Erase SLOT 0 DONE\n");
@@ -1353,7 +1353,7 @@ private:
             uint16_t nbRep = (addr_end-addr_start) / 256;    //  nbRep to get from addr_start to addr_end
             for (size_t i = 0; i < nbRep; i++)
             {
-                tr_debug("Erase %d bytes from : %lx \n",256,(addr_start + (i*256)));
+                tr_debug("Erase %d bytes from : %x \n",256,(addr_start + (i*256)));
                 _bd.program(zeroes, (addr_start + (i*256)), 256);
             }
             tr_info("Erase SLOT 1 DONE\n");
@@ -1524,7 +1524,7 @@ private:
         memset(details.campaign, 0, ARM_UC_GUID_SIZE); // todo, add campaign info
         details.signatureSize = 0; // not sure what this is used for
 
-        tr_debug("writeBootloaderHeader:\n\taddr: %lu\n\tversion: %llu\n\tsize: %llu", addr, details.version, details.size);
+        tr_debug("writeBootloaderHeader:\n\taddr: %u\n\tversion: %llu\n\tsize: %llu", addr, details.version, details.size);
 
         uint8_t *fw_header_buff = (uint8_t*)malloc(ARM_UC_EXTERNAL_HEADER_SIZE_V2);
         if (!fw_header_buff) {
@@ -1544,12 +1544,12 @@ private:
 
         int r = _bd.program(buff.ptr, addr, buff.size);
         if (r != BD_ERROR_OK) {
-            tr_error("Failed to program firmware header: %lu bytes at address 0x%lx", buff.size, addr);
+            tr_error("Failed to program firmware header: %u bytes at address 0x%x", buff.size, addr);
             free(fw_header_buff);
             return LW_UC_BD_WRITE_ERROR;
         }
 
-        tr_debug("Stored the update parameters in flash on 0x%lx. Reset the board to apply update.", addr);
+        tr_debug("Stored the update parameters in flash on 0x%x. Reset the board to apply update.", addr);
 
         free(fw_header_buff);
 
@@ -1648,7 +1648,7 @@ private:
 
         // so... sanity check, do we have the same size in both places
         if (sizeOfFwInSlot2 != curr_details.size) {
-            tr_warn("Diff size mismatch, expecting %u (manifest) but got %lu (slot 2 content)", sizeOfFwInSlot2, (uint32_t)curr_details.size);
+            tr_warn("Diff size mismatch, expecting %u (manifest) but got %u (slot 2 content)", sizeOfFwInSlot2, (uint32_t)curr_details.size);
             return LW_UC_DIFF_SIZE_MISMATCH;
         }
 
@@ -1724,7 +1724,7 @@ private:
 
         // so... sanity check, do we have the same size in both places
         if (sizeOfFwInSlot2 != curr_details.size) {
-            tr_warn("Diff size mismatch, expecting %u (manifest) but got %lu (slot 2 content)", sizeOfFwInSlot2, (uint32_t)curr_details.size);
+            tr_warn("Diff size mismatch, expecting %u (manifest) but got %u (slot 2 content)", sizeOfFwInSlot2, (uint32_t)curr_details.size);
             return LW_UC_DIFF_SIZE_MISMATCH;
         }
 
@@ -1807,11 +1807,11 @@ private:
             if (mc_groups[mcIx].active && mc_groups[mcIx].params.sessionTime > currTime) {
                 uint32_t timeToStart = mc_groups[mcIx].params.sessionTime - static_cast<uint32_t>(currTime % 4294967296 /*pow(2, 32)*/);
 
-                tr_debug("adjusted time to start for mc group %u to %lu", mcIx, timeToStart);
+                tr_debug("adjusted time to start for mc group %u to %u", mcIx, timeToStart);
 
-                mc_groups[mcIx].startTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_start_irq), static_cast<float>(timeToStart));
+                mc_groups[mcIx].startTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_start_irq), std::chrono::seconds(timeToStart));
                 mc_groups[mcIx].timeoutTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_timeout_irq),
-                    static_cast<float>(timeToStart + mc_groups[mcIx].params.timeOut));
+                    std::chrono::seconds(timeToStart + mc_groups[mcIx].params.timeOut));
             }
         }
     }
@@ -1950,5 +1950,7 @@ private:
     uint8_t _genAppKey[16];
     Callback<void(LoRaWANUpdateClientSendParams_t&)> _send_fn;
 };
+
+#undef TRACE_GROUP
 
 #endif // _MBED_LORAWAN_UPDATE_CLIENT_UPDATE_CLIENT

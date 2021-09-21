@@ -31,10 +31,8 @@
 #include "FragmentationBlockDeviceWrapper.h"
 #include "FlashIAP.h"
 
-#include "mbed_memory_status.h"
-
 #include "mbed_trace.h"
-#ifndef TRACE_GROUP
+#ifdef TRACE_GROUP
 #undef TRACE_GROUP
 #endif
 #define TRACE_GROUP "DLTA"
@@ -169,7 +167,7 @@ int apply_delta_update_compressed(FragmentationBlockDeviceWrapper *bd, size_t bu
     print_heap_and_isr_stack_info();
     #endif
 
-    if (ret = ddelta_header_read(&header, patch) < 0){
+    if ((ret = ddelta_header_read(&header, patch)) < 0){
         tr_debug("NOT a ddelta file sent (error %d)",ret);
         return -1;
     }
@@ -235,5 +233,7 @@ int apply_delta_update(FragmentationBlockDeviceWrapper *bd, size_t buffer_size, 
 
     return j;
 }
+
+#undef TRACE_GROUP
 
 #endif // _MBED_LORAWAN_UPDATE_CLIENT_DELTA_UPDATE

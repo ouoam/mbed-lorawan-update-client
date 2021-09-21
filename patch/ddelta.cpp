@@ -26,9 +26,6 @@
 
 #include "ddelta.h"
 
-#include "mbed_memory_status.h"
-
-
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -56,7 +53,7 @@ void printHeapStats(const char *prefix = "") {
     mbed_stats_heap_t heap_stats;
     mbed_stats_heap_get(&heap_stats);
 
-    tr_info("%sHeap stats: %lu / %lu (max=%lu)", prefix, heap_stats.current_size, heap_stats.reserved_size, heap_stats.max_size);
+    tr_info("%sHeap stats: %u / %u (max=%u)", prefix, heap_stats.current_size, heap_stats.reserved_size, heap_stats.max_size);
 }
 
 static uint64_t ddelta_be64toh(uint64_t be64)
@@ -113,7 +110,7 @@ int ddelta_entry_header_read(struct ddelta_entry_header *entry,
 
 static int apply_diff(Z_ARI_FILE *patchfd, BDFILE *oldfd, BDFILE *newfd, uint64_t size)
 {
-    tr_debug("-Diff of %lu bytes",(uint32_t)size);
+    tr_debug("-Diff of %u bytes",(uint32_t)size);
     #if DO_MEMORY_PRINT==1
     tr_debug("entry apply diff :");
     print_all_thread_info();
@@ -185,7 +182,7 @@ static int apply_diff(Z_ARI_FILE *patchfd, BDFILE *oldfd, BDFILE *newfd, uint64_
 
         size -= toread;
         
-        tr_debug("  there is still : %lu",(uint32_t) size); 
+        tr_debug("  there is still : %u",(uint32_t) size); 
     }
     free(old);
     free(patch);
@@ -195,7 +192,7 @@ static int apply_diff(Z_ARI_FILE *patchfd, BDFILE *oldfd, BDFILE *newfd, uint64_
 
 static int copy_bytes(Z_ARI_FILE *a, BDFILE *b, uint64_t bytes)
 {
-    tr_debug("-Copy of %lu bytes",(uint32_t)bytes);
+    tr_debug("-Copy of %u bytes",(uint32_t)bytes);
     char buf[DDELTA_BLOCK_SIZE];
     while (bytes > 0) {
         uint64_t toread = MIN(sizeof(buf), bytes);
@@ -242,7 +239,7 @@ int ddelta_apply(struct ddelta_header *header, Z_ARI_FILE *patchfd, BDFILE *oldf
             return err;
 
         /* Skip remaining bytes */
-        tr_debug("-Skipping %lu bytes",(uint32_t)entry.seek.value);
+        tr_debug("-Skipping %u bytes",(uint32_t)entry.seek.value);
         if (bd_fseek(oldfd,entry.seek.value, SEEK_CUR) < 0) {
             return -DDELTA_EOLDIO;
         }
