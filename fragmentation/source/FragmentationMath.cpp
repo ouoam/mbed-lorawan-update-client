@@ -59,7 +59,7 @@ FragmentationMath::~FragmentationMath()
 bool FragmentationMath::initialize()
 {
     // global for this session
-    matrixM2B = (uint8_t *)calloc((_redundancy_max / 8) * _redundancy_max, 1);
+    matrixM2B = (uint8_t *)calloc(((_redundancy_max >> 3) + 1) * _redundancy_max, 1);
 
     missingFrameIndex = (uint16_t *)calloc(_frame_count, sizeof(uint16_t));
 
@@ -92,6 +92,10 @@ bool FragmentationMath::initialize()
         missingFrameIndex[ix] = 1;
     }
 
+    for( uint32_t i = 0; i < ( ((_redundancy_max >> 3) + 1) * _redundancy_max ); i++ )
+    {
+       matrixM2B[i] = 0xFF;
+    }
 
     return true;
 }
@@ -105,14 +109,8 @@ void FragmentationMath::set_frame_found(uint16_t frameCounter)
 
 int FragmentationMath::process_redundant_frame(uint16_t frameCounter, uint8_t *rowData, FragmentationMathSessionParams_t sFotaParameter)
 {
-    int l;
-    int i;
-    int j;
-    int li;
-    int lj;
-    int firstOneInRow;
     static int m2l = 0;
-    int first = 0;
+    int haveMissingFrame = 0;
     int noInfo = 0;
 
     memset(matrixRow, 0, _frame_count);
@@ -126,35 +124,27 @@ int FragmentationMath::process_redundant_frame(uint16_t frameCounter, uint8_t *r
 
     FragmentationGetParityMatrixRow(frameCounter - sFotaParameter.NbOfFrag, sFotaParameter.NbOfFrag, matrixRow); //frameCounter-sFotaParameter.NbOfFrag
 
-    for (l = 0; l < (sFotaParameter.NbOfFrag); l++)
-    {
-        if (matrixRow[l] == 1)
-        {
-            if (missingFrameIndex[l] == 0)
-            { // xor with already receive frame
-                matrixRow[l] = 0;
+    for (int l = 0; l < sFotaParameter.NbOfFrag; l++) {
+        if (matrixRow[l] == 1) {
+            if (missingFrameIndex[l] == 0) { // xor with already receive frame
                 GetRowInFlash(l, matrixDataTemp);
                 XorLineData(xorRowDataTemp, matrixDataTemp, sFotaParameter.DataSize);
-
-            }
-            else
-            { // fill the "little" boolean matrix m2
+            } else { // fill the "little" boolean matrix m2b
                 dataTempVector[missingFrameIndex[l] - 1] = 1;
-                if (first == 0)
-                {
-                    first = 1;
+                if (haveMissingFrame == 0) {
+                    haveMissingFrame = 1;
                 }
             }
         }
     }
-    firstOneInRow = FindFirstOne(dataTempVector, numberOfLoosingFrame);
-    if (first > 0)
-    { //manage a new line in MatrixM2
+    if (haveMissingFrame > 0)
+    { //manage a new line in MatrixM2B
+        int firstOneInRow = FindFirstOne(dataTempVector, numberOfLoosingFrame);
         while (s[firstOneInRow] == 1)
-        { // row already diagonalized exist&(sFotaParameter.MatrixM2[firstOneInRow][0])
+        { // row already diagonalized exist&(sFotaParameter.MatrixM2B[firstOneInRow][0])
             ExtractLineFromBinaryMatrix(dataTempVector2, firstOneInRow, numberOfLoosingFrame);
             XorLineBool(dataTempVector, dataTempVector2, numberOfLoosingFrame);
-            li = FindMissingFrameIndex(firstOneInRow); // have to store it in the mi th position of the missing frame
+            int li = FindMissingFrameIndex(firstOneInRow); // have to store it in the mi th position of the missing frame
             GetRowInFlash(li, matrixDataTemp);
             XorLineData(xorRowDataTemp, matrixDataTemp, sFotaParameter.DataSize);
             if (VectorIsNull(dataTempVector, numberOfLoosingFrame))
@@ -164,10 +154,11 @@ int FragmentationMath::process_redundant_frame(uint16_t frameCounter, uint8_t *r
             }
             firstOneInRow = FindFirstOne(dataTempVector, numberOfLoosingFrame);
         }
+        
         if (noInfo == 0)
         {
             PushLineToBinaryMatrix(dataTempVector, firstOneInRow, numberOfLoosingFrame);
-            li = FindMissingFrameIndex(firstOneInRow);
+            int li = FindMissingFrameIndex(firstOneInRow);
             StoreRowInFlash(xorRowDataTemp, li);
             s[firstOneInRow] = 1;
             m2l++;
@@ -177,11 +168,11 @@ int FragmentationMath::process_redundant_frame(uint16_t frameCounter, uint8_t *r
         { // then last step diagonalized
             if (numberOfLoosingFrame > 1)
             {
-                for (i = (numberOfLoosingFrame - 2); i >= 0; i--)
+                for (int i = (numberOfLoosingFrame - 2); i >= 0; i--)
                 {
-                    li = FindMissingFrameIndex(i);
+                    int li = FindMissingFrameIndex(i);
                     GetRowInFlash(li, matrixDataTemp);
-                    for (j = (numberOfLoosingFrame - 1); j > i; j--)
+                    for (int j = (numberOfLoosingFrame - 1); j > i; j--)
                     {
                         ExtractLineFromBinaryMatrix(dataTempVector2, i, numberOfLoosingFrame);
                         ExtractLineFromBinaryMatrix(dataTempVector, j, numberOfLoosingFrame);
@@ -190,7 +181,7 @@ int FragmentationMath::process_redundant_frame(uint16_t frameCounter, uint8_t *r
                             XorLineBool(dataTempVector2, dataTempVector, numberOfLoosingFrame);
                             PushLineToBinaryMatrix(dataTempVector2, i, numberOfLoosingFrame);
 
-                            lj = FindMissingFrameIndex(j);
+                            int lj = FindMissingFrameIndex(j);
 
                             GetRowInFlash(lj, xorRowDataTemp);
                             XorLineData(matrixDataTemp, xorRowDataTemp, sFotaParameter.DataSize);
@@ -198,12 +189,9 @@ int FragmentationMath::process_redundant_frame(uint16_t frameCounter, uint8_t *r
                     }
                     StoreRowInFlash(matrixDataTemp, li);
                 }
-                return (numberOfLoosingFrame);
-            }
-
-            else
-            { //ifnot ( numberOfLoosingFrame > 1 )
-                return (numberOfLoosingFrame);
+                return numberOfLoosingFrame;
+            } else { //ifnot ( numberOfLoosingFrame > 1 )
+                return numberOfLoosingFrame; // 0
             }
         }
     }
@@ -234,15 +222,12 @@ void FragmentationMath::StoreRowInFlash(uint8_t *rowData, int index)
 
 uint16_t FragmentationMath::FindMissingFrameIndex(uint16_t x)
 {
-    uint16_t i;
-    for (i = 0; i < _frame_count; i++)
-    {
-        if (missingFrameIndex[i] == (x + 1))
-        {
-            return (i);
+    for (uint16_t i = 0; i < _frame_count; i++) {
+        if (missingFrameIndex[i] == (x + 1)) {
+            return i;
         }
     }
-    return (0);
+    return 0;
 }
 
 void FragmentationMath::FindMissingReceiveFrame(uint16_t frameCounter)
@@ -269,52 +254,22 @@ void FragmentationMath::FindMissingReceiveFrame(uint16_t frameCounter)
 
 void FragmentationMath::XorLineData(uint8_t *dataL1, uint8_t *dataL2, int size)
 {
-    int i;
-    uint8_t *dataTemp = (uint8_t *)malloc(size);
-    if (!dataTemp) {
-        tr_warn("XorLineData malloc out of memory!");
-        return;
+    for (int i = 0; i < size; i++) {
+        dataL1[i] ^= dataL2[i];
     }
-
-    for (i = 0; i < size; i++)
-    {
-        dataTemp[i] = dataL1[i] ^ dataL2[i];
-    }
-    for (i = 0; i < size; i++)
-    {
-        dataL1[i] = dataTemp[i];
-    }
-    free(dataTemp);
 }
 
 void FragmentationMath::XorLineBool(bool *dataL1, bool *dataL2, int size)
 {
-    int i;
-    bool *dataTemp = (bool *)malloc(size);
-    if (!dataTemp) {
-        tr_warn("XorLineBool malloc failed");
-        return;
+    for (int i = 0; i < size; i++) {
+        dataL1[i] ^= dataL2[i];
     }
-
-    for (i = 0; i < size; i++)
-    {
-        dataTemp[i] = dataL1[i] ^ dataL2[i];
-    }
-    for (i = 0; i < size; i++)
-    {
-        dataL1[i] = dataTemp[i];
-    }
-
-    free(dataTemp);
 }
 
 int FragmentationMath::FindFirstOne(bool *boolData, int size)
 {
-    int i;
-    for (i = 0; i < size; i++)
-    {
-        if (boolData[i] == 1)
-        {
+    for (int i = 0; i < size; i++) {
+        if (boolData[i] == 1) {
             return i;
         }
     }
@@ -323,11 +278,8 @@ int FragmentationMath::FindFirstOne(bool *boolData, int size)
 
 bool FragmentationMath::VectorIsNull(bool *boolData, int size)
 {
-    int i;
-    for (i = 0; i < size; i++)
-    {
-        if (boolData[i] == 1)
-        {
+    for (int i = 0; i < size; i++) {
+        if (boolData[i] == 1) {
             return false;
         }
     }
@@ -336,103 +288,46 @@ bool FragmentationMath::VectorIsNull(bool *boolData, int size)
 
 void FragmentationMath::ExtractLineFromBinaryMatrix(bool *boolVector, int rownumber, int numberOfBit)
 {
-    int i;
-    int findByte;
-    int findBitInByte;
-    if (rownumber > 0)
-    {
-        findByte = (rownumber * numberOfBit - ((rownumber * (rownumber - 1)) / 2)) / 8;
-        findBitInByte = (rownumber * numberOfBit - ((rownumber * (rownumber - 1)) / 2)) % 8;
+    int findBit = rownumber * numberOfBit - ((rownumber * (rownumber - 1)) / 2);
+    for (int i = 0; i < rownumber; i++) {
+        boolVector[i] = 0;
     }
-    else
-    {
-        findByte = 0;
-        findBitInByte = 0;
-    }
-    if (rownumber > 0)
-    {
-        for (i = 0; i < rownumber; i++)
-        {
-            boolVector[i] = 0;
-        }
-    }
-    for (i = rownumber; i < numberOfBit; i++)
-    {
-        boolVector[i] = (matrixM2B[findByte] >> (7 - findBitInByte)) & 0x01;
-        findBitInByte++;
-        if (findBitInByte == 8)
-        {
-            findBitInByte = 0;
-            findByte++;
-        }
+    for (int i = rownumber; i < numberOfBit; i++) {
+        boolVector[i] = (matrixM2B[findBit >> 3] >> (7 - findBit & 0x7)) & 0x01; // get bit
+        findBit++;
     }
 }
 
 void FragmentationMath::PushLineToBinaryMatrix(bool *boolVector, int rownumber, int numberOfBit)
 {
-    int i;
-    int findByte;
-    int findBitInByte;
-    if (rownumber > 0)
-    {
-        findByte = (rownumber * numberOfBit - ((rownumber * (rownumber - 1)) / 2)) / 8;
-        findBitInByte = (rownumber * numberOfBit - ((rownumber * (rownumber - 1)) / 2)) % 8;
-    }
-    else
-    {
-        findByte = 0;
-        findBitInByte = 0;
-    }
-    for (i = rownumber; i < numberOfBit; i++)
-    {
-        if (boolVector[i] == 1)
-        {
-            matrixM2B[findByte] = (matrixM2B[findByte] & (0xFF - (1 << (7 - findBitInByte)))) + (1 << (7 - findBitInByte));
+    int findBit = rownumber * numberOfBit - ((rownumber * (rownumber - 1)) / 2);
+
+    for (int i = rownumber; i < numberOfBit; i++) {
+        if (boolVector[i] == 0) {
+            matrixM2B[findBit >> 3] &= ~(1 << (7 - findBit & 0x7)); // clear bit
         }
-        else
-        {
-            matrixM2B[findByte] = (matrixM2B[findByte] & (0xFF - (1 << (7 - findBitInByte))));
-        }
-        findBitInByte++;
-        if (findBitInByte == 8)
-        {
-            findBitInByte = 0;
-            findByte++;
-        }
+        findBit++;
     }
 }
 
 void FragmentationMath::FragmentationGetParityMatrixRow(int N, int M, bool *matrixRow)
 {
+    memset(matrixRow, 0, M);
 
-    int i;
-    int m;
-    int x;
-    int nbCoeff = 0;
-    int r;
-    if (IsPowerOfTwo(M))
-    {
+    int m = 0;
+    if (IsPowerOfTwo(M)) {
         m = 1;
     }
-    else
-    {
-        m = 0;
-    }
-    x = 1 + (1001 * N);
-    for (i = 0; i < M; i++)
-    {
-        matrixRow[i] = 0;
-    }
-    while (nbCoeff < (M >> 1))
-    {
-        r = 1 << 16;
-        while (r >= M)
-        {
+
+    int x = 1 + (1001 * N);
+
+    for (int nbCoeff = 0; nbCoeff < (M >> 1); nbCoeff++) {
+        int r = 1 << 16;
+        while (r >= M) {
             x = FragmentationPrbs23(x);
             r = x % (M + m);
         }
         matrixRow[r] = 1;
-        nbCoeff += 1;
     }
 }
 
@@ -440,26 +335,10 @@ int FragmentationMath::FragmentationPrbs23(int x)
 {
     int b0 = x & 1;
     int b1 = (x & 0x20) >> 5;
-    x = (int)floor((double)x / 2) + ((b0 ^ b1) << 22);
-    return x;
+    return (x >> 1) + ((b0 ^ b1) << 22);
 }
 
 bool FragmentationMath::IsPowerOfTwo(unsigned int x)
 {
-    int i;
-    int bi;
-    int sumBit = 0;
-    for (i = 0; i < 32; i++)
-    {
-        bi = 1 << i;
-        sumBit += (x & bi) >> i;
-    }
-    if (sumBit == 1)
-    {
-        return (true);
-    }
-    else
-    {
-        return (false);
-    }
+    return x != 0 && (x & (x-1)) == 0;
 }
