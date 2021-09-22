@@ -76,6 +76,11 @@ FragResult FragmentationSession::process_frame(uint16_t index, uint8_t* buffer, 
         return FRAG_OK;
     }
 
+    if (index > _opts.NumberOfFragments + _opts.RedundancyPackets) {
+        tr_error("Redundancy Packets more than Maximum number");
+        return FRAG_NO_MEMORY;
+    }
+
     // redundancy packet coming in
     FragmentationMathSessionParams_t params;
     params.NbOfFrag = _opts.NumberOfFragments;
