@@ -27,7 +27,9 @@ uint32_t FragmentationCrc32::calculate(uint32_t address, size_t size) {
     size_t offset = address;
     size_t bytes_left = size;
 
-    uint64_t crc = 0;
+    MbedCRC<POLY_32BIT_ANSI, 32> ct;
+    uint32_t crc = 0;
+    ct.compute_partial_start(&crc);
 
     while (bytes_left > 0) {
         size_t length = _buffer_size;
@@ -35,11 +37,13 @@ uint32_t FragmentationCrc32::calculate(uint32_t address, size_t size) {
 
         _flash->read(_buffer, offset, length);
 
-        crc = crc32(crc, _buffer, length);
+        ct.compute_partial(_buffer, length, &crc);
 
         offset += length;
         bytes_left -= length;
     }
+
+    ct.compute_partial_stop(&crc);
 
     return crc;
 }

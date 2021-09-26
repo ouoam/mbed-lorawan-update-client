@@ -20,7 +20,6 @@
 
 #include "mbed.h"
 #include "FragmentationBlockDeviceWrapper.h"
-#include "crc32.h"
 
 class FragmentationCrc32 {
 public:
