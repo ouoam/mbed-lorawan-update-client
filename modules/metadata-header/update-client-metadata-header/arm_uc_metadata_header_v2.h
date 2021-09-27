@@ -21,6 +21,7 @@
 
 #include "update-client-common/arm_uc_types.h"
 #include "update-client-common/arm_uc_error.h"
+#include "arm_uc_buffer_utilities.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,8 +52,7 @@ extern "C" {
 
 #define ARM_UC_EXTERNAL_HEADER_SIZE_V2 (296)
 
-typedef struct _arm_uc_internal_header_t
-{
+typedef struct _arm_uc_internal_header_t {
     /* Metadata-header specific magic code */
     uint32_t headerMagic;
 
@@ -92,8 +92,7 @@ typedef struct _arm_uc_internal_header_t
     uint8_t firmwareSignature[0];
 } arm_uc_internal_header_t;
 
-typedef struct _arm_uc_external_header_t
-{
+typedef struct _arm_uc_external_header_t {
     /* Metadata-header specific magic code */
     uint32_t headerMagic;
 
@@ -171,17 +170,41 @@ typedef struct _arm_uc_external_header_t
     uint8_t firmwareSignature[0];
 } arm_uc_external_header_t;
 
-arm_uc_error_t arm_uc_parse_internal_header_v2(const uint8_t* input,
-                                               arm_uc_firmware_details_t* output);
+/**
+ * @brief Get a 256 device key.
+ *
+ * @param output buffer struct to cotain output device key.
+                 The size member of the struct will be set on success.
+ *
+ * @return ERR_NONE on success, error code on failure.
+ */
+int32_t ARM_UC_getDeviceKey256Bit(arm_uc_buffer_t *output);
 
-arm_uc_error_t arm_uc_create_internal_header_v2(const arm_uc_firmware_details_t* input,
-                                                arm_uc_buffer_t* output);
+/**
+ * @brief Function to get the device root of trust
+ * @details The device root of trust should be a 128 bit value. It should never leave the device.
+ *          It should be unique to the device. It should have enough entropy to avoid contentional
+ *          entropy attacks. The porter should implement the following device signature to provide
+ *          device root of trust on different platforms.
+ *
+ * @param key_buf buffer to be filled with the device root of trust.
+ * @param length  length of the buffer provided to make sure no overflow occurs.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int8_t mbed_cloud_client_get_rot_128bit(uint8_t *key_buf, uint32_t length);
 
-arm_uc_error_t arm_uc_parse_external_header_v2(const uint8_t* input,
-                                               arm_uc_firmware_details_t* output);
+int32_t arm_uc_parse_internal_header_v2(const uint8_t *input,
+                                               arm_uc_firmware_details_t *output);
 
-arm_uc_error_t arm_uc_create_external_header_v2(const arm_uc_firmware_details_t* input,
-                                                arm_uc_buffer_t* output);
+int32_t arm_uc_create_internal_header_v2(const arm_uc_firmware_details_t *input,
+                                                arm_uc_buffer_t *output);
+
+int32_t arm_uc_parse_external_header_v2(const uint8_t *input,
+                                               arm_uc_firmware_details_t *output);
+
+int32_t arm_uc_create_external_header_v2(const arm_uc_firmware_details_t *input,
+                                                arm_uc_buffer_t *output);
 
 #ifdef __cplusplus
 }

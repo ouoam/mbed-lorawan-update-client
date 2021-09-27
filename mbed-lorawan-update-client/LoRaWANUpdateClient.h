@@ -1545,10 +1545,10 @@ private:
 
         arm_uc_buffer_t buff = { ARM_UC_EXTERNAL_HEADER_SIZE_V2, ARM_UC_EXTERNAL_HEADER_SIZE_V2, fw_header_buff };
 
-        arm_uc_error_t err = arm_uc_create_external_header_v2(&details, &buff);
+        int32_t err = arm_uc_create_external_header_v2(&details, &buff);
 
-        if (err.error != ERR_NONE) {
-            tr_error("Failed to create external header (%d)", err.error);
+        if (err != ERR_NONE) {
+            tr_error("Failed to create external header (%d)", err);
             free(fw_header_buff);
             return LW_UC_CREATE_BOOTLOADER_HEADER_FAILED;
         }
