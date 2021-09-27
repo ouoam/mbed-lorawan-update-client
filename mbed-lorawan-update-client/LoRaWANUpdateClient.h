@@ -1341,7 +1341,7 @@ private:
         //NOT SAFE ERASE <=> ONLY REPLACING HEADER w/ zeroes
         uint8_t slot = (buffer[0] & 0x0f); //mask RFU
 
-        //SIZE OF FW HEADER : ARM_UC_EXTERNAL_HEADER_SIZE_V2
+        //SIZE OF FW HEADER : ARM_UC_INTERNAL_HEADER_SIZE_V2
         //(CPYED FROM UPDATE MANAGEMENT)
         
         uint8_t zeroes[256] = {0}; 
@@ -1349,7 +1349,7 @@ private:
         if (slot == 0) {
             //ERASE FIRST SLOT (SLOT 0)
             uint32_t addr_start = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS;
-            uint32_t addr_end = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS+ARM_UC_EXTERNAL_HEADER_SIZE_V2;
+            uint32_t addr_end = MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT0_HEADER_ADDRESS+ARM_UC_INTERNAL_HEADER_SIZE_V2;
             uint16_t nbRep = (addr_end-addr_start) / 10;    //  nbRep to get from addr_start to addr_end
             for (size_t i = 0; i < nbRep; i++)
             {
@@ -1537,15 +1537,15 @@ private:
 
         tr_debug("writeBootloaderHeader:\n\taddr: %u\n\tversion: %llu\n\tsize: %llu", addr, details.version, details.size);
 
-        uint8_t *fw_header_buff = (uint8_t*)malloc(ARM_UC_EXTERNAL_HEADER_SIZE_V2);
+        uint8_t *fw_header_buff = (uint8_t*)malloc(ARM_UC_INTERNAL_HEADER_SIZE_V2);
         if (!fw_header_buff) {
-            tr_error("Could not allocate %d bytes for header", ARM_UC_EXTERNAL_HEADER_SIZE_V2);
+            tr_error("Could not allocate %d bytes for header", ARM_UC_INTERNAL_HEADER_SIZE_V2);
             return LW_UC_OUT_OF_MEMORY;
         }
 
-        arm_uc_buffer_t buff = { ARM_UC_EXTERNAL_HEADER_SIZE_V2, ARM_UC_EXTERNAL_HEADER_SIZE_V2, fw_header_buff };
+        arm_uc_buffer_t buff = { ARM_UC_INTERNAL_HEADER_SIZE_V2, ARM_UC_INTERNAL_HEADER_SIZE_V2, fw_header_buff };
 
-        int32_t err = arm_uc_create_external_header_v2(&details, &buff);
+        int32_t err = arm_uc_create_internal_header_v2(&details, &buff);
 
         if (err != ERR_NONE) {
             tr_error("Failed to create external header (%d)", err);
@@ -1607,8 +1607,8 @@ private:
 
         arm_uc_firmware_details_t details;
 
-        arm_uc_error_t err = arm_uc_parse_internal_header_v2(const_cast<uint8_t*>(buffer), &details);
-        if (err.error != ERR_NONE) {
+        int32_t err = arm_uc_parse_internal_header_v2(const_cast<uint8_t*>(buffer), &details);
+        if (err != ERR_NONE) {
             tr_warn("Internal header parsing failed (%d)", err.error);
             free(buffer);
             return LW_UC_INTERNALFLASH_HEADER_PARSE_FAILED;
@@ -1633,8 +1633,6 @@ private:
     LW_UC_STATUS applySlot0Slot2DeltaUpdate_ddelta(size_t sizeOfFwInSlot0, size_t sizeOfFwInSlot2, uint32_t *sizeOfFwInSlot1) {
         tr_info("DDELTA NOT FOUND, so using jpatch instead");
         applySlot0Slot2DeltaUpdate_jpatch( sizeOfFwInSlot0,  sizeOfFwInSlot2, sizeOfFwInSlot1);
-
-        }
     }
 
 #endif
@@ -1652,8 +1650,8 @@ private:
         tr_debug("UPDATE : applySlot0Slot2DeltaUpdate (jpatch)");
         // read details about the current firmware, it's in the slot2 header
         arm_uc_firmware_details_t curr_details;
-        int bd_status = _bd.read(&curr_details, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS, sizeof(arm_uc_firmware_details_t));
-        if (bd_status != BD_ERROR_OK) {
+        int bd_status = readFwDetailsFromSlot(&curr_details, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS);
+        if (bd_status != LW_UC_OK) {
             return LW_UC_BD_READ_ERROR;
         }
 
@@ -1728,8 +1726,8 @@ private:
         tr_debug("UPDATE : applySlot0Slot2DeltaUpdate (ddelta)");
         // read details about the current firmware, it's in the slot2 header
         arm_uc_firmware_details_t curr_details;
-        int bd_status = _bd.read(&curr_details, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS, sizeof(arm_uc_firmware_details_t));
-        if (bd_status != BD_ERROR_OK) {
+        int bd_status = readFwDetailsFromSlot(&curr_details, MBED_CONF_LORAWAN_UPDATE_CLIENT_SLOT2_HEADER_ADDRESS);
+        if (bd_status != LW_UC_OK) {
             return LW_UC_BD_READ_ERROR;
         }
 
@@ -1918,11 +1916,29 @@ private:
      * Read a firmware header from bd device
      */
     LW_UC_STATUS readFwDetailsFromSlot(arm_uc_firmware_details_t *details,uint32_t addr) {
+        uint8_t *fw_header_buff = (uint8_t*)malloc(ARM_UC_INTERNAL_HEADER_SIZE_V2);
+        if (!fw_header_buff) {
+            tr_error("Could not allocate %d bytes for header", ARM_UC_INTERNAL_HEADER_SIZE_V2);
+            return LW_UC_OUT_OF_MEMORY;
+        }
+
         _bd.init();
-        int bd_status = _bd.read(details, addr, sizeof(arm_uc_firmware_details_t));
-        if (bd_status != BD_ERROR_OK) {
+        if (_bd.read(fw_header_buff,  addr, ARM_UC_INTERNAL_HEADER_SIZE_V2) != BD_ERROR_OK) {
+            tr_warn("Read on internal flash failed");
+            free(fw_header_buff);
             return LW_UC_BD_READ_ERROR;
         }
+
+        // TODO: may check header version and magic
+
+        int32_t err = arm_uc_parse_internal_header_v2(const_cast<uint8_t*>(fw_header_buff), details);
+        if (err != ERR_NONE) {
+            tr_warn("Internal header parsing failed (%d)", err);
+            free(fw_header_buff);
+            return LW_UC_INTERNALFLASH_HEADER_PARSE_FAILED;
+        }
+
+        free(fw_header_buff);
         return LW_UC_OK;
     }
 
