@@ -92,6 +92,11 @@ bool FragmentationMath::initialize()
         missingFrameIndex[ix] = 1;
     }
 
+    for (size_t ix = 0; ix < _redundancy_max; ix++)
+    {
+        s[ix] = 0;
+    }
+
     for( uint32_t i = 0; i < ( ((_redundancy_max >> 3) + 1) * _redundancy_max ); i++ )
     {
        matrixM2B[i] = 0xFF;
@@ -191,7 +196,7 @@ int FragmentationMath::process_redundant_frame(uint16_t frameCounter, uint8_t *r
                 }
                 return numberOfLoosingFrame;
             } else { //ifnot ( numberOfLoosingFrame > 1 )
-                return numberOfLoosingFrame; // 0
+                return numberOfLoosingFrame; // 0 or 1
             }
         }
     }
