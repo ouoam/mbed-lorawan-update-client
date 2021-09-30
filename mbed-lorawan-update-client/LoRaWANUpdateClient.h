@@ -733,6 +733,9 @@ private:
 
         // start timers (but only if clock sync was done before, otherwise the clock sync will start them)
         if (timeToStart != 0xffffffff) {
+            if (timeToStart > 4) timeToStart -= 4;
+            else timeToStart = 0;
+
             mc_groups[mcIx].startTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_start_irq), std::chrono::seconds(timeToStart));
             mc_groups[mcIx].timeoutTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_timeout_irq),
                 std::chrono::seconds(timeToStart + mc_groups[mcIx].params.timeOut));
@@ -1817,6 +1820,9 @@ private:
                 uint32_t timeToStart = mc_groups[mcIx].params.sessionTime - static_cast<uint32_t>(currTime % 4294967296 /*pow(2, 32)*/);
 
                 tr_debug("adjusted time to start for mc group %u to %u", mcIx, timeToStart);
+
+                if (timeToStart > 4) timeToStart -= 4;
+                else timeToStart = 0;
 
                 mc_groups[mcIx].startTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_start_irq), std::chrono::seconds(timeToStart));
                 mc_groups[mcIx].timeoutTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_timeout_irq),
