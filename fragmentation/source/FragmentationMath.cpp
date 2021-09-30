@@ -298,7 +298,7 @@ void FragmentationMath::ExtractLineFromBinaryMatrix(bool *boolVector, int rownum
         boolVector[i] = 0;
     }
     for (int i = rownumber; i < numberOfBit; i++) {
-        boolVector[i] = (matrixM2B[findBit >> 3] >> (7 - findBit & 0x7)) & 0x01; // get bit
+        boolVector[i] = (matrixM2B[findBit >> 3] >> (7 - (findBit & 0x7))) & 0x01; // get bit
         findBit++;
     }
 }
@@ -309,7 +309,7 @@ void FragmentationMath::PushLineToBinaryMatrix(bool *boolVector, int rownumber, 
 
     for (int i = rownumber; i < numberOfBit; i++) {
         if (boolVector[i] == 0) {
-            matrixM2B[findBit >> 3] &= ~(1 << (7 - findBit & 0x7)); // clear bit
+            matrixM2B[findBit >> 3] &= ~(1 << (7 - (findBit & 0x7))); // clear bit
         }
         findBit++;
     }
