@@ -121,12 +121,9 @@ public:
      *                This is deliberatly not part of the callbacks structure, because it's a *required*
      *                part of the update client.
      */
-    LoRaWANUpdateClient(BlockDevice *bd, const uint8_t genAppKey[16], Callback<void(LoRaWANUpdateClientSendParams_t&)> send_fn)
+    LoRaWANUpdateClient(BlockDevice *bd, Callback<void(LoRaWANUpdateClientSendParams_t&)> send_fn)
         : _bd(bd), _send_fn(send_fn)
     {
-        // @todo: what if genAppKey is in secure element?
-        memcpy(_genAppKey, genAppKey, 16);
-
         for (size_t ix = 0; ix < NB_FRAG_GROUPS; ix++) {
             frag_sessions[ix].active = false;
             frag_sessions[ix].session = NULL;
@@ -148,6 +145,11 @@ public:
         callbacks.firmwareReady = NULL;
         callbacks.switchToClassC = NULL;
         callbacks.switchToClassA = NULL;
+    }
+
+    void set_genAppKey(const uint8_t genAppKey[16]) {
+        // @todo: what if genAppKey is in secure element?
+        memcpy(_genAppKey, genAppKey, 16);
     }
 
     /**
