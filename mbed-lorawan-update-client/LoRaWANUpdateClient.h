@@ -133,12 +133,6 @@ public:
             mc_groups[ix].active = false;
         }
 
-        if (get_rtc_time_s() < GPS_TO_UNIX_EpochDiff) {
-            set_time(GPS_TO_UNIX_EpochDiff);
-        }
-
-        _clockSync.correction = -GPS_TO_UNIX_EpochDiff;
-        _clockSync.rtcValueAtLastRequest = 0;
         _clockSyncTokenReq = 0;
 
         callbacks.fragSessionComplete = NULL;
@@ -284,7 +278,7 @@ public:
      *                       if not enabled the network only replies when clock drift is >250 ms.
      */
     LW_UC_STATUS requestClockSync(bool answerRequired) {
-        uint32_t deviceTime = static_cast<uint32_t>(getCurrentTime_s() & 0xFFFFFFFF /*modulo pow(2, 32)*/);
+        uint32_t deviceTime = getCurrentTime_s();
         uint8_t param = _clockSyncTokenReq & 0x0F;
         param |= (answerRequired ? 0b10000 : 0);
 
@@ -296,8 +290,6 @@ public:
             static_cast<uint8_t>(deviceTime >> 24 & 0xff),
             param
         };
-
-        _clockSync.rtcValueAtLastRequest = get_rtc_time_s();
 
         // This message SHALL only be transmitted a single time with a given DeviceTime payload,
         // as the network reception time stamp will be used by the application server to compute
@@ -318,7 +310,6 @@ public:
      */
     void outOfBandClockSync(uint32_t gpsTime) {
         set_time(gpsTime + GPS_TO_UNIX_EpochDiff);
-        _clockSync.correction -= GPS_TO_UNIX_EpochDiff;
 
         updateMcGroupsBasedOnNewTime();
     }
@@ -326,8 +317,8 @@ public:
     /**
      * Get the current time - in seconds since 00:00:00, Sunday 6th of January 1980 (start of the GPS epoch)
      */
-    uint64_t getCurrentTime_s() {
-        return get_rtc_time_s() + _clockSync.correction;
+    uint32_t getCurrentTime_s() {
+        return get_rtc_time_s() - GPS_TO_UNIX_EpochDiff;
     }
 
     /**
@@ -428,12 +419,7 @@ private:
 
         tr_debug("handleClockAppTimeAns, correction=%d", timeCorrection);
 
-        // delta between now and the time we sent the request out
-        uint64_t rx_tx_delta = get_rtc_time_s() - _clockSync.rtcValueAtLastRequest;
-
-        _clockSync.correction = _clockSync.correction + timeCorrection - rx_tx_delta;
-        set_time(get_rtc_time_s() + _clockSync.correction + GPS_TO_UNIX_EpochDiff);
-        _clockSync.correction = -GPS_TO_UNIX_EpochDiff;
+        set_time(get_rtc_time_s() + timeCorrection);
 
         updateMcGroupsBasedOnNewTime();
 
@@ -704,24 +690,24 @@ private:
         mc_groups[mcIx].params.dr = buffer[9];
 
         // ok... so now we need to know the current time based on clockSync and RTC
-        uint64_t currTime = getCurrentTime_s();
+        uint32_t currTime = getCurrentTime_s();
 
         uint32_t timeToStart;
 
         // No clock synchronisation done - this means that we need a proper clock sync before the MC request starts
         // the response should indicate this to the network server (because timeToStart is gonna be way off)
-        if (_clockSync.correction == 0x0) {
+        if (get_rtc_time_s() < GPS_TO_UNIX_EpochDiff) {
 #if MBED_CONF_LORAWAN_UPDATE_CLIENT_TRUST_RTC == 1
-            tr_warn("no accurate time known (correction=%d)", _clockSync.correction);
+            tr_warn("no accurate time known");
             timeToStart = 0xffffffff;
 #endif
         }
-        else if (mc_groups[mcIx].params.sessionTime < (currTime % 4294967296 /*pow(2, 32)*/)) {
+        else if (mc_groups[mcIx].params.sessionTime < currTime) {
             tr_warn("ClassCSessionReq for time in the past... Starting it immediately");
             timeToStart = 0;
         }
         else {
-            timeToStart = mc_groups[mcIx].params.sessionTime - static_cast<uint32_t>(currTime % 4294967296 /*pow(2, 32)*/);
+            timeToStart = mc_groups[mcIx].params.sessionTime - currTime;
         }
 
         tr_debug("\ttimeToStart:       %u", timeToStart);
@@ -1812,14 +1798,14 @@ private:
      * Update multicast group start dates based on an incoming clock sync
      */
     void updateMcGroupsBasedOnNewTime() {
-         uint64_t currTime = getCurrentTime_s();
+         uint32_t currTime = getCurrentTime_s();
 
-        tr_debug("updateMcGroupsBasedOnNewTime - time is now %llu", currTime);
+        tr_debug("updateMcGroupsBasedOnNewTime - time is now %u", currTime);
 
         // look at all the multicast groups and see if there are active timers which are dependent on the time...
         for (size_t mcIx = 0; mcIx < NB_MC_GROUPS; mcIx++) {
             if (mc_groups[mcIx].active && mc_groups[mcIx].params.sessionTime > currTime) {
-                uint32_t timeToStart = mc_groups[mcIx].params.sessionTime - static_cast<uint32_t>(currTime % 4294967296 /*pow(2, 32)*/);
+                uint32_t timeToStart = mc_groups[mcIx].params.sessionTime - currTime;
 
                 tr_debug("adjusted time to start for mc group %u to %u", mcIx, timeToStart);
 
@@ -1969,7 +1955,6 @@ private:
     FragmentationSessionParams_t frag_sessions[NB_FRAG_GROUPS];
     MulticastGroupParams_t mc_groups[NB_MC_GROUPS];
 
-    ClockSync_t _clockSync;
     uint32_t _clockSyncTokenReq;
 
 #if DEVICE_FLASH

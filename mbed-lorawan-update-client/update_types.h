@@ -303,18 +303,6 @@ typedef struct {
 
 } FragmentationSessionParams_t;
 
-typedef struct {
-    /**
-     * The correction that needs to be applied to the RTC value
-     */
-    int32_t correction;
-
-    /**
-     * The current time during the last clock sync request
-     */
-    uint64_t rtcValueAtLastRequest;
-} ClockSync_t;
-
 enum FragmenationSessionAnswerErrors {
     FSAE_WrongDescriptor = 3,
     FSAE_IndexNotSupported = 2,
