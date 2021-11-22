@@ -685,7 +685,7 @@ private:
 
         // the start of the Class C window, and is expressed as the time in seconds since 00:00:00, Sunday 6th of January 1980 (start of the GPS epoch) modulo 2^32.
         mc_groups[mcIx].params.sessionTime = (buffer[4] << 24) + (buffer[3] << 16) + (buffer[2] << 8) + buffer[1];
-        mc_groups[mcIx].params.timeOut = pow(2.0f, static_cast<int>(buffer[5] & 0b1111));
+        mc_groups[mcIx].params.timeOut = 1 << (buffer[5] & 0b1111);
         mc_groups[mcIx].params.dlFreq = ((buffer[8] << 16) + (buffer[7] << 8) + buffer[6]) * 100;
         mc_groups[mcIx].params.dr = buffer[9];
 
@@ -721,7 +721,7 @@ private:
 
         // start timers (but only if clock sync was done before, otherwise the clock sync will start them)
         if (timeToStart != 0xffffffff) {
-            if (timeToStart > 4) timeToStart -= 4;
+            if (timeToStart > 2) timeToStart -= 2;
             else timeToStart = 0;
 
             mc_groups[mcIx].startTimeout.attach(callback(this, &LoRaWANUpdateClient::mc_start_irq), std::chrono::seconds(timeToStart));
