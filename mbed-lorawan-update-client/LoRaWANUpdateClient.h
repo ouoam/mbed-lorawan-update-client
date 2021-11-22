@@ -753,12 +753,12 @@ private:
             return LW_UC_OK;
         }
 
-        if (frag_sessions[fragIx].active) {
+        // if (frag_sessions[fragIx].active) {
             if (frag_sessions[fragIx].session) {
                 // clear memory associated with the session - this should clear out the full context...
                 delete frag_sessions[fragIx].session;
             }
-        }
+        // }
 
         frag_sessions[fragIx].mcGroupBitMask = buffer[0] & 0b1111;
         frag_sessions[fragIx].nbFrag = (buffer[2] << 8) + buffer[1];
@@ -885,7 +885,7 @@ private:
 
         // otherwise we need to send an update...
         // @todo problem is that we don't have the info anymore after we reconstructed
-        if (!frag_sessions[fragIx].active || frag_sessions[fragIx].session == NULL) {
+        if (frag_sessions[fragIx].session == NULL) {
             // @todo: this is wrong because I don't have the info...
             return LW_UC_OK;
         }
@@ -983,9 +983,9 @@ private:
             }
 
             // clear the session to re-claim memory
-            if (frag_sessions[fragIx].session) {
-                delete frag_sessions[fragIx].session;
-            }
+            // if (frag_sessions[fragIx].session) {
+            //     delete frag_sessions[fragIx].session;
+            // }
 
             // make the session inactive
             frag_sessions[fragIx].active = false;
